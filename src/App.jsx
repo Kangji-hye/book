@@ -363,13 +363,15 @@ export default function App() {
           libs.map(async (l) => ({ libCode: l.libCode, status: await checkBookExist(l.libCode, isbn) }))
         )
         setNearbyLibs(prev =>
-          prev.map(l => {
-            const found = results.find(r => r.libCode === l.libCode)
-            return found ? { ...l, status: found.status } : l
-          })
+          prev
+            .map(l => {
+              const found = results.find(r => r.libCode === l.libCode)
+              return found ? { ...l, status: found.status } : l
+            })
+            .sort((a, b) => (a.distance ?? Infinity) - (b.distance ?? Infinity))
         )
       } else {
-        setNearbyLibs(libs.map(l => ({ ...l, status: null })))
+        setNearbyLibs(libs.map(l => ({ ...l, status: null })).sort((a, b) => (a.distance ?? Infinity) - (b.distance ?? Infinity)))
       }
     } catch (e) {
       setNearbyLoading(false)
@@ -685,7 +687,7 @@ export default function App() {
                         {nearbyError && (
                           <div className="lib-error">{nearbyError}</div>
                         )}
-                        {nearbyLibs.map(lib => {
+                        {[...nearbyLibs].sort((a, b) => (a.distance ?? Infinity) - (b.distance ?? Infinity)).map(lib => {
                           const s = lib.status ? (LIB_STATUS[lib.status] || LIB_STATUS.error) : null
                           const isFav = favorites.some(f => f.libCode === lib.libCode)
                           return (
