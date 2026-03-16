@@ -1,0 +1,24 @@
+{
+  "name": "책 스캐너",
+  "short_name": "책스캐너",
+  "description": "바코드를 스캔해서 추천도서·리딩레이스 목록과 도서관 소장 여부를 확인해요",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#08080f",
+  "theme_color": "#08080f",
+  "orientation": "portrait",
+  "icons": [
+    {
+      "src": "/logo.png",
+      "sizes": "any",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/logo_big.png",
+      "sizes": "any",
+      "type": "image/png",
+      "purpose": "any"
+    }
+  ]
+}
