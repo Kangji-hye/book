@@ -436,7 +436,7 @@ export default function App() {
           <div className="header-logo-mark">B</div>
           <div className="header-logo-text">
             <span className="header-logo-sub">BOOK CHECKER</span>
-            <span className="header-logo-main">책 스캐너</span>
+            <span className="header-logo-main">책 스캐너2</span>
           </div>
         </div>
         <button
