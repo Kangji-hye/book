@@ -107,10 +107,14 @@ async function fetchBookInfo(isbn) {
   const naverSecret = import.meta.env.VITE_NAVER_CLIENT_SECRET || ''
   if (naverId && naverSecret) {
     try {
-      const base = import.meta.env.DEV ? '/naver-api' : 'https://openapi.naver.com'
+      const url = import.meta.env.DEV
+        ? `/naver-api/v1/search/book.json?query=${encodeURIComponent(clean)}&display=1`
+        : `/api/naver-search?query=${encodeURIComponent(clean)}`
       const res = await fetch(
-        `${base}/v1/search/book.json?query=${encodeURIComponent(clean)}&display=1`,
-        { headers: { 'X-Naver-Client-Id': naverId, 'X-Naver-Client-Secret': naverSecret } }
+        url,
+        import.meta.env.DEV
+          ? { headers: { 'X-Naver-Client-Id': naverId, 'X-Naver-Client-Secret': naverSecret } }
+          : {}
       )
       const data = await res.json()
       const item = data?.items?.[0]
