@@ -229,6 +229,9 @@ export default function App() {
   const [nearbyLibs, setNearbyLibs] = useState([])
   const [nearbyLoading, setNearbyLoading] = useState(false)
   const [nearbyError, setNearbyError] = useState('')
+  const [libSearchQuery, setLibSearchQuery] = useState('')
+  const [libSearchResults, setLibSearchResults] = useState([])
+  const [libSearchLoading, setLibSearchLoading] = useState(false)
   const [history, setHistory] = useState(() => {
     try { return JSON.parse(localStorage.getItem('bc_history')) || [] } catch { return [] }
   })
@@ -391,6 +394,23 @@ export default function App() {
       return next
     })
   }, [bookData])
+
+  const doLibSearch = useCallback(async () => {
+    if (!libSearchQuery.trim()) return
+    setLibSearchLoading(true)
+    setLibSearchResults([])
+    try {
+      const res = await fetch(`/api/lib-name-search?name=${encodeURIComponent(libSearchQuery.trim())}`)
+      const data = await res.json()
+      const libs = (data?.response?.libs ?? []).map(({ lib }) => ({
+        libCode: lib.libCode,
+        libName: lib.libName,
+        address: lib.address ?? '',
+      }))
+      setLibSearchResults(libs)
+    } catch { setLibSearchResults([]) }
+    setLibSearchLoading(false)
+  }, [libSearchQuery])
 
   const toggleFavorite = useCallback((lib) => {
     setFavorites(prev => {
@@ -655,6 +675,47 @@ export default function App() {
                   {/* 탭 0: 도서관 소장 */}
                   {activeTab === 0 && (
                     <div>
+
+                      {/* 도서관 검색으로 즐겨찾기 추가 */}
+                      <div className="lib-section">
+                        <div className="lib-section-header">
+                          <span className="lib-section-title">🔍 도서관 검색</span>
+                        </div>
+                        <div className="manual-search-row">
+                          <input
+                            className="manual-search-input"
+                            value={libSearchQuery}
+                            onChange={e => setLibSearchQuery(e.target.value)}
+                            onKeyDown={e => e.key === 'Enter' && doLibSearch()}
+                            placeholder="도서관 이름 입력 (예: 용인)"
+                          />
+                          <button
+                            className="manual-search-btn"
+                            onClick={doLibSearch}
+                            disabled={libSearchLoading || !libSearchQuery.trim()}
+                          >
+                            {libSearchLoading ? '…' : '검색'}
+                          </button>
+                        </div>
+                        {libSearchResults.map(lib => {
+                          const isFav = favorites.some(f => f.libCode === lib.libCode)
+                          return (
+                            <div key={lib.libCode} className="lib-nearby-item">
+                              <div className="lib-nearby-info">
+                                <div className="lib-nearby-name">{lib.libName}</div>
+                                {lib.address && <div className="lib-nearby-addr">{lib.address}</div>}
+                              </div>
+                              <button
+                                className={`lib-fav-btn ${isFav ? 'active' : ''}`}
+                                onClick={() => toggleFavorite(lib)}
+                                title={isFav ? '즐겨찾기 해제' : '즐겨찾기 추가'}
+                              >
+                                {isFav ? '⭐' : '☆'}
+                              </button>
+                            </div>
+                          )
+                        })}
+                      </div>
 
                       {/* 즐겨찾기 섹션 */}
                       {favorites.length > 0 && (
