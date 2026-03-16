@@ -221,6 +221,9 @@ export default function App() {
   const [favorites, setFavorites] = useState(() => {
     try { return JSON.parse(localStorage.getItem('bc_favorites')) || [] } catch { return [] }
   })
+  const [bookFavorites, setBookFavorites] = useState(() => {
+    try { return JSON.parse(localStorage.getItem('bc_book_favorites')) || [] } catch { return [] }
+  })
   const [favResults, setFavResults] = useState({})
   const [favLoading, setFavLoading] = useState(false)
   const [nearbyLibs, setNearbyLibs] = useState([])
@@ -377,6 +380,18 @@ export default function App() {
     }
   }, [])
 
+  const toggleBookFavorite = useCallback(() => {
+    if (!bookData) return
+    setBookFavorites(prev => {
+      const exists = prev.find(b => b.isbn === bookData.isbn)
+      const next = exists
+        ? prev.filter(b => b.isbn !== bookData.isbn)
+        : [...prev, { isbn: bookData.isbn, title: bookData.title, author: bookData.author, thumbnail: bookData.thumbnail }]
+      localStorage.setItem('bc_book_favorites', JSON.stringify(next))
+      return next
+    })
+  }, [bookData])
+
   const toggleFavorite = useCallback((lib) => {
     setFavorites(prev => {
       const exists = prev.find(f => f.libCode === lib.libCode)
@@ -455,6 +470,25 @@ export default function App() {
               추천도서·리딩레이스 목록과<br/>
               도서관 소장 여부를 확인해드려요
             </p>
+            {bookFavorites.length > 0 && (
+              <>
+                <div className="idle-divider" />
+                <div style={{ width: '100%' }}>
+                  <div className="history-label">⭐ 즐겨찾기 책</div>
+                  <div className="history-scroll">
+                    {bookFavorites.map((b, i) => (
+                      <div key={i} className="history-card" onClick={() => doSearch(b.isbn)}>
+                        {b.thumbnail
+                          ? <img src={b.thumbnail} alt="" className="history-thumb" />
+                          : <div className="history-thumb-placeholder">📚</div>
+                        }
+                        <div className="history-card-title">{b.title}</div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </>
+            )}
             {history.length > 0 && (
               <>
                 <div className="idle-divider" />
@@ -516,9 +550,18 @@ export default function App() {
                   }
                 </div>
                 <div className="book-meta">
-                  <span className="book-source-badge">
-                    {bookData.source === 'lib' ? '도서관' : bookData.source === 'db' ? '목록DB' : 'Google Books'}
-                  </span>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                    <span className="book-source-badge">
+                      {bookData.source === 'lib' ? '도서관' : bookData.source === 'db' ? '목록DB' : 'Google Books'}
+                    </span>
+                    <button
+                      onClick={toggleBookFavorite}
+                      title={bookFavorites.some(b => b.isbn === bookData.isbn) ? '즐겨찾기 해제' : '즐겨찾기 추가'}
+                      style={{ background: 'none', border: 'none', fontSize: 22, cursor: 'pointer', padding: '0 4px' }}
+                    >
+                      {bookFavorites.some(b => b.isbn === bookData.isbn) ? '⭐' : '☆'}
+                    </button>
+                  </div>
                   <div className="book-title">{bookData.title}</div>
                   <div className="book-author">{bookData.author}</div>
                   <div className="book-tags">
@@ -599,7 +642,7 @@ export default function App() {
             {lists !== null && (
               <div className="tabs-wrap">
                 <div className="tabs-header">
-                  {['도서관 소장', '제목 검색'].map((label, i) => (
+                  {['도서관 소장', '도서 검색'].map((label, i) => (
                     <button key={i} className={`tab-btn ${activeTab === i ? 'active' : ''}`} onClick={() => setActiveTab(i)}>
                       {label}
                     </button>
@@ -696,31 +739,35 @@ export default function App() {
                     </div>
                   )}
 
-                  {/* 탭 1: 제목 검색 */}
+                  {/* 탭 1: 도서 검색 */}
                   {activeTab === 1 && (
                     <div>
-                      <div className="manual-search-label">제목 일부로 다시 검색</div>
+                      <div className="manual-search-label">제목 또는 ISBN으로 검색</div>
                       <div className="manual-search-row">
                         <input
                           className="manual-search-input"
                           value={manualTitle}
                           onChange={e => setManualTitle(e.target.value)}
-                          onKeyDown={e => e.key === 'Enter' && doManualSearch()}
-                          placeholder="책 제목 일부를 입력하세요"
+                          onKeyDown={e => {
+                            if (e.key !== 'Enter') return
+                            const v = manualTitle.trim().replace(/-/g, '')
+                            if (/^97[89]\d{10}$/.test(v)) doSearch(v)
+                            else doManualSearch()
+                          }}
+                          placeholder="책 제목 또는 ISBN 입력"
                         />
                         <button
                           className="manual-search-btn"
-                          onClick={doManualSearch}
+                          onClick={() => {
+                            const v = manualTitle.trim().replace(/-/g, '')
+                            if (/^97[89]\d{10}$/.test(v)) doSearch(v)
+                            else doManualSearch()
+                          }}
                           disabled={!manualTitle.trim()}
                         >
                           검색
                         </button>
                       </div>
-                      {lists && lists.recommended.length === 0 && lists.race.length === 0 && (
-                        <div className="list-empty" style={{ marginTop: 12 }}>
-                          두 목록 모두에 없는 책이에요.<br/>제목 일부로 검색해보세요.
-                        </div>
-                      )}
                     </div>
                   )}
 
