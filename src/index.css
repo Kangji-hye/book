@@ -1,68 +1,57 @@
+@import url('https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;600;700&family=Noto+Sans+KR:wght@300;400;500;600;700&display=swap');
+
 :root {
-  font-family: system-ui, Avenir, Helvetica, Arial, sans-serif;
-  line-height: 1.5;
-  font-weight: 400;
+  --bg: #08080f;
+  --surface-1: #0e0e1a;
+  --surface-2: #141425;
+  --card: rgba(255, 255, 255, 0.04);
+  --card-hover: rgba(255, 255, 255, 0.07);
+  --border: rgba(255, 255, 255, 0.08);
+  --border-bright: rgba(255, 255, 255, 0.14);
+  --gold: #c9a96e;
+  --gold-light: #e8c98a;
+  --gold-dim: rgba(201, 169, 110, 0.2);
+  --gold-glow: rgba(201, 169, 110, 0.4);
+  --blue: #5b8dd9;
+  --blue-dim: rgba(91, 141, 217, 0.18);
+  --green: #4caf7d;
+  --green-dim: rgba(76, 175, 125, 0.18);
+  --red: #e05c6a;
+  --red-dim: rgba(224, 92, 106, 0.18);
+  --yellow-dim: rgba(255, 200, 50, 0.18);
+  --text-1: #f0ebe0;
+  --text-2: #a09880;
+  --text-3: #55556699;
+  --radius-sm: 10px;
+  --radius: 16px;
+  --radius-lg: 24px;
+  --header-h: 56px;
+  --footer-h: 80px;
+}
 
-  color-scheme: light dark;
-  color: rgba(255, 255, 255, 0.87);
-  background-color: #242424;
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
-  font-synthesis: none;
+html {
+  font-size: 16px;
+  -webkit-tap-highlight-color: transparent;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
-}
-
-a {
-  font-weight: 500;
-  color: #646cff;
-  text-decoration: inherit;
-}
-a:hover {
-  color: #535bf2;
 }
 
 body {
-  margin: 0;
-  display: flex;
-  place-items: center;
-  min-width: 320px;
-  min-height: 100vh;
+  background: var(--bg);
+  color: var(--text-1);
+  font-family: 'Noto Sans KR', sans-serif;
+  min-height: 100dvh;
+  overflow-x: hidden;
 }
 
-h1 {
-  font-size: 3.2em;
-  line-height: 1.1;
-}
+#root { min-height: 100dvh; }
 
-button {
-  border-radius: 8px;
-  border: 1px solid transparent;
-  padding: 0.6em 1.2em;
-  font-size: 1em;
-  font-weight: 500;
-  font-family: inherit;
-  background-color: #1a1a1a;
-  cursor: pointer;
-  transition: border-color 0.25s;
-}
-button:hover {
-  border-color: #646cff;
-}
-button:focus,
-button:focus-visible {
-  outline: 4px auto -webkit-focus-ring-color;
-}
+button { cursor: pointer; font-family: inherit; border: none; background: none; color: inherit; }
+input { font-family: inherit; outline: none; }
+a { text-decoration: none; color: inherit; }
 
-@media (prefers-color-scheme: light) {
-  :root {
-    color: #213547;
-    background-color: #ffffff;
-  }
-  a:hover {
-    color: #747bff;
-  }
-  button {
-    background-color: #f9f9f9;
-  }
-}
+::-webkit-scrollbar { width: 3px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--border-bright); border-radius: 2px; }

@@ -1,35 +1,861 @@
-import { useState } from 'react'
-import reactLogo from './assets/react.svg'
-import viteLogo from '/vite.svg'
+import { useState, useEffect, useCallback, useRef } from 'react'
+import supabase from './supabaseClient'
+import CameraScanner from './components/CameraScanner'
 import './App.css'
 
-function App() {
-  const [count, setCount] = useState(0)
+// ── 상수 ──────────────────────────────────────────────────────────────────────
+const LIB_API_KEY = import.meta.env.VITE_LIB_APIKEY || ''
 
-  return (
-    <>
-      <div>
-        <a href="https://vite.dev" target="_blank">
-          <img src={viteLogo} className="logo" alt="Vite logo" />
-        </a>
-        <a href="https://react.dev" target="_blank">
-          <img src={reactLogo} className="logo react" alt="React logo" />
-        </a>
-      </div>
-      <h1>Vite + React</h1>
-      <div className="card">
-        <button onClick={() => setCount((count) => count + 1)}>
-          count is {count}
-        </button>
-        <p>
-          Edit <code>src/App.jsx</code> and save to test HMR
-        </p>
-      </div>
-      <p className="read-the-docs">
-        Click on the Vite and React logos to learn more
-      </p>
-    </>
-  )
+const GRADE_LABEL = {
+  '-1': '유치원',
+  '1': '1학년', '2': '2학년', '3': '3학년',
+  '4': '4학년', '5': '5학년', '6': '6학년',
 }
 
-export default App
+const LIB_STATUS = {
+  loading:     { label: '조회 중…',     cls: 'loading' },
+  available:   { label: '✅ 대출 가능',  cls: 'available' },
+  unavailable: { label: '🔴 대출 중',    cls: 'unavailable' },
+  none:        { label: '⬜ 미소장',     cls: 'none' },
+  error:       { label: '⚠ 오류',       cls: 'error' },
+}
+
+// ── 유틸 ──────────────────────────────────────────────────────────────────────
+function cleanTitle(title) {
+  return title
+    .replace(/\(.*?\)/g, '').replace(/\[.*?\]/g, '').replace(/【.*?】/g, '')
+    .replace(/『.*?』/g, '').replace(/「.*?」/g, '')
+    .replace(/[!@#$%^&*_+={|}\\<>?/~`'"]/g, '')
+    .replace(/\s+/g, ' ').trim()
+}
+
+function stripHtml(str = '') {
+  return str.replace(/<[^>]*>/g, '').replace(/&lt;/g,'<').replace(/&gt;/g,'>').replace(/&amp;/g,'&').replace(/&quot;/g,'"')
+}
+
+function formatPubdate(d = '') {
+  if (d.length === 8) return `${d.slice(0,4)}년 ${d.slice(4,6)}월 ${d.slice(6,8)}일`
+  return d
+}
+
+// ── JSONP 헬퍼 ────────────────────────────────────────────────────────────────
+function fetchJsonp(url) {
+  return new Promise((resolve, reject) => {
+    const cbName = '_libcb_' + Math.random().toString(36).slice(2)
+    const script = document.createElement('script')
+    const timer = setTimeout(() => {
+      delete window[cbName]; script.remove(); reject(new Error('timeout'))
+    }, 8000)
+    window[cbName] = (data) => {
+      clearTimeout(timer); delete window[cbName]; script.remove(); resolve(data)
+    }
+    script.src = `${url}&callback=${cbName}`
+    script.onerror = () => {
+      clearTimeout(timer); delete window[cbName]; script.remove(); reject(new Error('error'))
+    }
+    document.head.appendChild(script)
+  })
+}
+
+// ── 거리 계산 (Haversine, km) ─────────────────────────────────────────────────
+function haversine(lat1, lng1, lat2, lng2) {
+  const R = 6371
+  const dLat = (lat2 - lat1) * Math.PI / 180
+  const dLng = (lng2 - lng1) * Math.PI / 180
+  const a = Math.sin(dLat/2)**2 + Math.cos(lat1*Math.PI/180)*Math.cos(lat2*Math.PI/180)*Math.sin(dLng/2)**2
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a))
+}
+
+// ── 주변 도서관 검색 ──────────────────────────────────────────────────────────
+async function fetchNearbyLibs(lat, lng, radius = 5) {
+  const url = `https://www.data4library.kr/api/libSrch?authKey=${LIB_API_KEY}&latitude=${lat}&longitude=${lng}&radius=${radius}&format=json`
+  const data = await fetchJsonp(url)
+  const libs = data?.response?.libs ?? []
+  return libs
+    .map(({ lib }) => ({
+      libCode: lib.libCode,
+      libName: lib.libName,
+      address: lib.address ?? '',
+      homepage: lib.homepage ?? '',
+      lat: parseFloat(lib.latitude),
+      lng: parseFloat(lib.longitude),
+      distance: haversine(lat, lng, parseFloat(lib.latitude), parseFloat(lib.longitude)),
+    }))
+    .sort((a, b) => a.distance - b.distance)
+}
+
+// ── 소장/대출 여부 확인 ───────────────────────────────────────────────────────
+async function checkBookExist(libCode, isbn) {
+  try {
+    const url = `https://www.data4library.kr/api/bookExist?authKey=${LIB_API_KEY}&libCode=${libCode}&isbn13=${isbn}&format=json`
+    const data = await fetchJsonp(url)
+    const result = data?.response?.result
+    if (!result) return 'error'
+    if (result.hasBook === 'N') return 'none'
+    return result.loanAvailable === 'Y' ? 'available' : 'unavailable'
+  } catch {
+    return 'error'
+  }
+}
+
+// ── 책 정보 조회 (네이버 → Google Books) ──────────────────────────────────────
+async function fetchBookInfo(isbn) {
+  const clean = isbn.replace(/-/g, '').trim()
+
+  // 1순위: 네이버 책 검색 API
+  const naverId = import.meta.env.VITE_NAVER_CLIENT_ID || ''
+  const naverSecret = import.meta.env.VITE_NAVER_CLIENT_SECRET || ''
+  if (naverId && naverSecret) {
+    try {
+      const base = import.meta.env.DEV ? '/naver-api' : 'https://openapi.naver.com'
+      const res = await fetch(
+        `${base}/v1/search/book.json?query=${encodeURIComponent(clean)}&display=1`,
+        { headers: { 'X-Naver-Client-Id': naverId, 'X-Naver-Client-Secret': naverSecret } }
+      )
+      const data = await res.json()
+      const item = data?.items?.[0]
+      if (item) {
+        return {
+          title: stripHtml(item.title ?? ''),
+          author: item.author ?? '',
+          thumbnail: item.image ?? '',
+          description: stripHtml(item.description ?? ''),
+          publisher: item.publisher ?? '',
+          pubdate: formatPubdate(item.pubdate ?? ''),
+          link: item.link ?? '',
+          price: item.discount ? `${Number(item.discount).toLocaleString()}원` : '',
+          isbn: item.isbn ?? clean,
+          source: 'naver',
+        }
+      }
+    } catch { /* 폴백 */ }
+  }
+
+  // 2순위: 도서관 정보나루 API
+  const libKey = import.meta.env.VITE_LIB_APIKEY || ''
+  if (libKey) {
+    try {
+      const res = await fetch(
+        `https://www.data4library.kr/api/srchBooks?authKey=${libKey}&isbn=${clean}&format=json`
+      )
+      const data = await res.json()
+      const doc = data?.response?.docs?.[0]?.doc
+      if (doc) {
+        return {
+          title: doc.bookname ?? '',
+          author: doc.authors ?? '',
+          thumbnail: doc.bookImageURL ?? '',
+          description: doc.description ?? '',
+          publisher: doc.publisher ?? '',
+          pubdate: '',
+          link: '',
+          price: '',
+          isbn: clean,
+          source: 'lib',
+        }
+      }
+    } catch { /* 폴백 */ }
+  }
+
+  // 3순위: Google Books API
+  try {
+    const res = await fetch(`https://www.googleapis.com/books/v1/volumes?q=isbn:${clean}`)
+    const data = await res.json()
+    const item = data?.items?.[0]?.volumeInfo
+    if (item) {
+      return {
+        title: item.title ?? '',
+        author: (item.authors ?? []).join(', '),
+        thumbnail: (item.imageLinks?.thumbnail ?? '').replace('http:', 'https:'),
+        description: item.description ?? '',
+        publisher: item.publisher ?? '',
+        pubdate: item.publishedDate ?? '',
+        link: item.infoLink ?? '',
+        price: '',
+        isbn: clean,
+        source: 'google',
+      }
+    }
+  } catch { /* ignore */ }
+
+  return null
+}
+
+// ── Supabase ISBN 조회 ────────────────────────────────────────────────────────
+async function searchByIsbn(isbn) {
+  const clean = isbn.replace(/-/g, '').trim()
+  const [rb, jrb, rrb, jrrb] = await Promise.all([
+    supabase.from('recommended_books').select('grade_code,book_no,title,author').eq('isbn', clean),
+    supabase.from('jangmi_recommended_books').select('grade_code,book_no,title,author').eq('isbn', clean),
+    supabase.from('reading_race_books').select('title,author,level').eq('isbn', clean),
+    supabase.from('jangmi_reading_race_books').select('title,author,level').eq('isbn', clean),
+  ])
+  const seen = new Set()
+  const recommended = [...(rb.data ?? []), ...(jrb.data ?? [])].filter(r => {
+    const k = `${r.grade_code}-${r.book_no}`; if (seen.has(k)) return false; seen.add(k); return true
+  })
+  const rSeen = new Set()
+  const race = [...(rrb.data ?? []), ...(jrrb.data ?? [])].filter(r => {
+    const k = `${r.level}-${r.title}`; if (rSeen.has(k)) return false; rSeen.add(k); return true
+  })
+  return { recommended, race }
+}
+
+// ── Supabase 제목 검색 ────────────────────────────────────────────────────────
+async function searchLists(title) {
+  const q = title.replace(/\(.*?\)/g, '').trim()
+  if (!q) return { recommended: [], race: [] }
+  const [rb, jrb, rrb, jrrb] = await Promise.all([
+    supabase.from('recommended_books').select('grade_code,book_no,title,author').ilike('title', `%${q}%`),
+    supabase.from('jangmi_recommended_books').select('grade_code,book_no,title,author').ilike('title', `%${q}%`),
+    supabase.from('reading_race_books').select('title,author,level').ilike('title', `%${q}%`),
+    supabase.from('jangmi_reading_race_books').select('title,author,level').ilike('title', `%${q}%`),
+  ])
+  const seen = new Set()
+  const recommended = [...(rb.data ?? []), ...(jrb.data ?? [])].filter(r => {
+    const k = `${r.grade_code}-${r.book_no}`; if (seen.has(k)) return false; seen.add(k); return true
+  })
+  const rSeen = new Set()
+  const race = [...(rrb.data ?? []), ...(jrrb.data ?? [])].filter(r => {
+    const k = `${r.level}-${r.title}`; if (rSeen.has(k)) return false; rSeen.add(k); return true
+  })
+  return { recommended, race }
+}
+
+// ── 메인 앱 ──────────────────────────────────────────────────────────────────
+export default function App() {
+  const [mode, setMode] = useState('idle')           // idle | loading | result
+  const [showCamera, setShowCamera] = useState(false)
+  const [showIsbnInput, setShowIsbnInput] = useState(false)
+  const [isbn, setIsbn] = useState('')
+  const [bookData, setBookData] = useState(null)
+  const [lists, setLists] = useState(null)
+  const [noBookInfo, setNoBookInfo] = useState(false)
+  const [activeTab, setActiveTab] = useState(0)
+  const [descExpanded, setDescExpanded] = useState(false)
+  const [manualTitle, setManualTitle] = useState('')
+  const [favorites, setFavorites] = useState(() => {
+    try { return JSON.parse(localStorage.getItem('bc_favorites')) || [] } catch { return [] }
+  })
+  const [favResults, setFavResults] = useState({})
+  const [favLoading, setFavLoading] = useState(false)
+  const [nearbyLibs, setNearbyLibs] = useState([])
+  const [nearbyLoading, setNearbyLoading] = useState(false)
+  const [nearbyError, setNearbyError] = useState('')
+  const [history, setHistory] = useState(() => {
+    try { return JSON.parse(localStorage.getItem('bc_history')) || [] } catch { return [] }
+  })
+  const [showHistory, setShowHistory] = useState(false)
+
+  const currentIsbnRef = useRef('')
+  const currentTitleRef = useRef('')
+  const isbnInputRef = useRef(null)
+
+  // ISBN 입력창 열리면 포커스
+  useEffect(() => {
+    if (showIsbnInput) isbnInputRef.current?.focus()
+  }, [showIsbnInput])
+
+  const addHistory = useCallback((info, isbnVal) => {
+    if (!info?.title) return
+    setHistory(prev => {
+      const filtered = prev.filter(h => h.isbn !== isbnVal)
+      const next = [{ isbn: isbnVal, title: info.title, author: info.author, thumbnail: info.thumbnail, ts: Date.now() }, ...filtered].slice(0, 10)
+      localStorage.setItem('bc_history', JSON.stringify(next))
+      return next
+    })
+  }, [])
+
+  const doSearch = useCallback(async (isbnVal) => {
+    const clean = (isbnVal || isbn).replace(/-/g, '').trim()
+    if (!clean) return
+
+    currentIsbnRef.current = clean
+    currentTitleRef.current = ''
+    setMode('loading')
+    setBookData(null)
+    setLists(null)
+    setNoBookInfo(false)
+    setActiveTab(0)
+    setDescExpanded(false)
+    setFavResults({})
+    setNearbyLibs([])
+    setNearbyError('')
+    setManualTitle('')
+    setShowIsbnInput(false)
+
+    // 1) ISBN으로 DB 직접 조회
+    const direct = await searchByIsbn(clean)
+    if (direct.recommended.length > 0 || direct.race.length > 0) {
+      // DB에서 찾았으니 외부 API로 책 정보도 가져옴
+      const info = await fetchBookInfo(clean)
+      if (info) {
+        setBookData(info)
+        currentTitleRef.current = info.title
+        addHistory(info, clean)
+      }
+      setLists(direct)
+      setMode('result')
+      return
+    }
+
+    // 2) 외부 API로 책 정보 조회 후 제목으로 DB 검색
+    const info = await fetchBookInfo(clean)
+    if (info) {
+      setBookData(info)
+      currentTitleRef.current = info.title
+      addHistory(info, clean)
+      const res = await searchLists(info.title)
+      setLists(res)
+    } else {
+      setNoBookInfo(true)
+    }
+    setMode('result')
+  }, [isbn, addHistory])
+
+  const doManualSearch = useCallback(async () => {
+    const q = manualTitle.trim()
+    if (!q) return
+    setMode('loading')
+    setLists(null)
+    const res = await searchLists(q)
+    setLists(res)
+    setMode('result')
+  }, [manualTitle])
+
+  // 즐겨찾기 도서관 소장 확인
+  const doFavCheck = useCallback(async () => {
+    const isbn = currentIsbnRef.current
+    if (!isbn || favorites.length === 0) return
+    setFavLoading(true)
+    const initState = {}
+    favorites.forEach(f => { initState[f.libCode] = 'loading' })
+    setFavResults(initState)
+    const results = await Promise.all(
+      favorites.map(async (f) => ({ libCode: f.libCode, status: await checkBookExist(f.libCode, isbn) }))
+    )
+    const next = {}
+    results.forEach(({ libCode, status }) => { next[libCode] = status })
+    setFavResults(next)
+    setFavLoading(false)
+  }, [favorites])
+
+  // GPS 주변 도서관 검색 + 소장 확인
+  const doNearbySearch = useCallback(async () => {
+    const isbn = currentIsbnRef.current
+    setNearbyLoading(true)
+    setNearbyError('')
+    setNearbyLibs([])
+    try {
+      const pos = await new Promise((resolve, reject) =>
+        navigator.geolocation.getCurrentPosition(resolve, reject, { timeout: 10000 })
+      )
+      const { latitude, longitude } = pos.coords
+      const libs = await fetchNearbyLibs(latitude, longitude)
+      setNearbyLibs(libs.map(l => ({ ...l, status: 'loading' })))
+      setNearbyLoading(false)
+      if (isbn) {
+        const results = await Promise.all(
+          libs.map(async (l) => ({ libCode: l.libCode, status: await checkBookExist(l.libCode, isbn) }))
+        )
+        setNearbyLibs(prev =>
+          prev.map(l => {
+            const found = results.find(r => r.libCode === l.libCode)
+            return found ? { ...l, status: found.status } : l
+          })
+        )
+      } else {
+        setNearbyLibs(libs.map(l => ({ ...l, status: null })))
+      }
+    } catch (e) {
+      setNearbyLoading(false)
+      if (e.code === 1) setNearbyError('위치 접근 권한이 거부되었어요.\n브라우저 설정에서 허용해주세요.')
+      else setNearbyError('위치를 가져오는 데 실패했어요. 다시 시도해주세요.')
+    }
+  }, [])
+
+  const toggleFavorite = useCallback((lib) => {
+    setFavorites(prev => {
+      const exists = prev.find(f => f.libCode === lib.libCode)
+      const next = exists
+        ? prev.filter(f => f.libCode !== lib.libCode)
+        : [...prev, { libCode: lib.libCode, libName: lib.libName, address: lib.address }]
+      localStorage.setItem('bc_favorites', JSON.stringify(next))
+      return next
+    })
+  }, [])
+
+  const handleDetected = useCallback((val) => {
+    setShowCamera(false)
+    setIsbn(val)
+    doSearch(val)
+  }, [doSearch])
+
+  const handleHistoryItem = useCallback((item) => {
+    setShowHistory(false)
+    setIsbn(item.isbn)
+    doSearch(item.isbn)
+  }, [doSearch])
+
+  // 탭 인디케이터 위치
+  const tabCount = 3
+  const tabIndicatorLeft = `${(activeTab / tabCount) * 100}%`
+  const tabIndicatorWidth = `${100 / tabCount}%`
+
+  return (
+    <div className="app">
+      {/* ── 헤더 ── */}
+      <header className="app-header">
+        <div className="header-logo">
+          <div className="header-logo-mark">B</div>
+          <div className="header-logo-text">
+            <span className="header-logo-sub">BOOK CHECKER</span>
+            <span className="header-logo-main">책 스캐너</span>
+          </div>
+        </div>
+        <button
+          className={`header-btn ${showHistory ? 'active' : ''}`}
+          onClick={() => setShowHistory(v => !v)}
+          title="최근 스캔"
+        >
+          🕐
+        </button>
+      </header>
+
+      {/* ── 메인 ── */}
+      <main className="app-main">
+
+        {/* 아이들 화면 */}
+        {mode === 'idle' && (
+          <div className="idle-hero">
+            {/* 레이더 애니메이션 */}
+            <div className="idle-radar-wrap">
+              <div className="idle-radar-ring" />
+              <div className="idle-radar-ring" />
+              <div className="idle-radar-ring" />
+              <button className="idle-radar-center" onClick={() => setShowCamera(true)}>
+                <span className="idle-radar-icon">📷</span>
+              </button>
+            </div>
+
+            <div className="idle-eyebrow">BOOK CHECKER</div>
+            <h1 className="idle-title">책을 스캔해요</h1>
+            <p className="idle-sub">
+              바코드를 스캔하거나 ISBN을 입력하면<br/>
+              추천도서·리딩레이스 목록과<br/>
+              도서관 소장 여부를 확인해드려요
+            </p>
+            {history.length > 0 && (
+              <>
+                <div className="idle-divider" />
+                <div style={{ width: '100%' }}>
+                  <div className="history-label">RECENT</div>
+                  <div className="history-scroll">
+                    {history.map((h, i) => (
+                      <div key={i} className="history-card" onClick={() => handleHistoryItem(h)}>
+                        {h.thumbnail
+                          ? <img src={h.thumbnail} alt="" className="history-thumb" />
+                          : <div className="history-thumb-placeholder">📚</div>
+                        }
+                        <div className="history-card-title">{h.title}</div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </>
+            )}
+          </div>
+        )}
+
+        {/* 로딩 스켈레톤 */}
+        {mode === 'loading' && (
+          <div>
+            <div className="skeleton-card">
+              <div style={{ display: 'flex', gap: 16 }}>
+                <div className="skel skel-cover" />
+                <div style={{ flex: 1 }}>
+                  <div className="skel skel-line lg" style={{ marginBottom: 10 }} />
+                  <div className="skel skel-line md" style={{ marginBottom: 8 }} />
+                  <div className="skel skel-line sm" />
+                </div>
+              </div>
+            </div>
+            <div className="skeleton-card">
+              <div className="skel skel-line" style={{ marginBottom: 10, width: '40%' }} />
+              <div className="skel skel-line" style={{ marginBottom: 8 }} />
+              <div className="skel skel-line" style={{ width: '80%', marginBottom: 8 }} />
+              <div className="skel skel-line" style={{ width: '65%' }} />
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'center', paddingTop: 8 }}>
+              <div className="spinner" />
+            </div>
+          </div>
+        )}
+
+        {/* 결과 화면 */}
+        {mode === 'result' && (
+          <div className="book-result">
+
+            {/* 책 정보 히어로 카드 */}
+            {bookData && (
+              <div className="book-hero">
+                <div className="book-cover-wrap">
+                  {bookData.thumbnail
+                    ? <img src={bookData.thumbnail} alt="표지" className="book-cover" />
+                    : <div className="book-cover-placeholder">📚</div>
+                  }
+                </div>
+                <div className="book-meta">
+                  <span className="book-source-badge">
+                    {bookData.source === 'naver' ? '네이버' : bookData.source === 'lib' ? '도서관' : 'Google Books'}
+                  </span>
+                  <div className="book-title">{bookData.title}</div>
+                  <div className="book-author">{bookData.author}</div>
+                  <div className="book-tags">
+                    {bookData.publisher && <span className="book-tag">{bookData.publisher}</span>}
+                    {bookData.pubdate && <span className="book-tag">{bookData.pubdate}</span>}
+                    {bookData.price && <span className="book-tag">{bookData.price}</span>}
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* 책 정보를 못 찾은 경우 */}
+            {noBookInfo && !bookData && (
+              <div style={{
+                background: 'var(--card)', border: '1px solid rgba(201,169,110,0.3)',
+                borderRadius: 'var(--radius)', padding: '16px 20px', marginBottom: 12,
+              }}>
+                <div style={{ fontSize: 13, color: 'var(--gold)', fontWeight: 600, marginBottom: 10 }}>
+                  ⚠️ 책 정보를 찾지 못했어요. 제목으로 검색해보세요.
+                </div>
+                <div className="manual-search-row">
+                  <input
+                    className="manual-search-input"
+                    value={manualTitle}
+                    onChange={e => setManualTitle(e.target.value)}
+                    onKeyDown={e => e.key === 'Enter' && doManualSearch()}
+                    placeholder="책 제목을 입력하세요"
+                  />
+                  <button className="manual-search-btn" onClick={doManualSearch} disabled={!manualTitle.trim()}>
+                    검색
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* 책 설명 */}
+            {bookData?.description && (
+              <div className="book-desc-card">
+                <div className="book-desc-label">DESCRIPTION</div>
+                <div className={`book-desc-text ${descExpanded ? '' : 'collapsed'}`}>
+                  {bookData.description}
+                </div>
+                <button className="book-desc-toggle" onClick={() => setDescExpanded(v => !v)}>
+                  {descExpanded ? '접기 ▲' : '더보기 ▼'}
+                </button>
+              </div>
+            )}
+
+            {/* 네이버 링크 */}
+            {bookData?.link && (
+              <a className="book-naver-link" href={bookData.link} target="_blank" rel="noopener noreferrer">
+                <span>🔗</span>
+                <span>네이버 책 상세 페이지</span>
+              </a>
+            )}
+
+            {/* 탭 */}
+            {lists !== null && (
+              <div className="tabs-wrap">
+                <div className="tabs-header">
+                  {['목록 확인', '도서관 소장', '제목 검색'].map((label, i) => (
+                    <button key={i} className={`tab-btn ${activeTab === i ? 'active' : ''}`} onClick={() => setActiveTab(i)}>
+                      {label}
+                    </button>
+                  ))}
+                  <div className="tab-indicator" style={{ left: tabIndicatorLeft, width: tabIndicatorWidth }} />
+                </div>
+
+                <div className="tab-content">
+
+                  {/* 탭 0: 목록 확인 */}
+                  {activeTab === 0 && (
+                    <div>
+                      {/* 리딩레이스 */}
+                      <div className="list-section">
+                        <div className="list-section-header">
+                          <span className="list-status-icon">{lists.race.length > 0 ? '✅' : '❌'}</span>
+                          <span className="list-section-title">리딩레이스 목록</span>
+                          <span className="list-section-count">
+                            {lists.race.length > 0 ? `${lists.race.length}건` : '없음'}
+                          </span>
+                        </div>
+                        {lists.race.length > 0 ? lists.race.map((r, i) => (
+                          <div key={i} className="list-item">
+                            {r.level && <span className="list-badge race">{r.level}단계</span>}
+                            <div>
+                              <div className="list-item-title">{r.title}</div>
+                              {r.author && <div className="list-item-author">{r.author}</div>}
+                            </div>
+                          </div>
+                        )) : (
+                          <div className="list-empty">리딩레이스 목록에 없는 책이에요</div>
+                        )}
+                      </div>
+
+                      {/* 추천도서 */}
+                      <div className="list-section">
+                        <div className="list-section-header">
+                          <span className="list-status-icon">{lists.recommended.length > 0 ? '✅' : '❌'}</span>
+                          <span className="list-section-title">독서수첩 추천도서</span>
+                          <span className="list-section-count">
+                            {lists.recommended.length > 0 ? `${lists.recommended.length}건` : '없음'}
+                          </span>
+                        </div>
+                        {lists.recommended.length > 0 ? lists.recommended.map((r, i) => (
+                          <div key={i} className="list-item">
+                            <span className="list-badge rec">{GRADE_LABEL[String(r.grade_code)] ?? `${r.grade_code}학년`}</span>
+                            <div>
+                              <div className="list-item-title">{r.title}</div>
+                              {r.author && <div className="list-item-author">{r.author}</div>}
+                            </div>
+                            {r.book_no && <span className="list-item-no">No.{r.book_no}</span>}
+                          </div>
+                        )) : (
+                          <div className="list-empty">추천도서 목록에 없는 책이에요</div>
+                        )}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* 탭 1: 도서관 소장 */}
+                  {activeTab === 1 && (
+                    <div>
+
+                      {/* 즐겨찾기 섹션 */}
+                      {favorites.length > 0 && (
+                        <div className="lib-section">
+                          <div className="lib-section-header">
+                            <span className="lib-section-title">⭐ 즐겨찾기</span>
+                            <button
+                              className="lib-fav-check-btn"
+                              onClick={doFavCheck}
+                              disabled={favLoading || !currentIsbnRef.current}
+                            >
+                              {favLoading ? '조회 중…' : '소장 확인'}
+                            </button>
+                          </div>
+                          {favorites.map(fav => {
+                            const status = favResults[fav.libCode]
+                            const s = status ? (LIB_STATUS[status] || LIB_STATUS.error) : null
+                            return (
+                              <div key={fav.libCode} className="lib-nearby-item">
+                                <div className="lib-nearby-info">
+                                  <div className="lib-nearby-name">{fav.libName}</div>
+                                  {fav.address && <div className="lib-nearby-addr">{fav.address}</div>}
+                                </div>
+                                <div className="lib-nearby-actions">
+                                  {s && <span className={`lib-badge ${s.cls}`}>{s.label}</span>}
+                                  <button className="lib-fav-btn active" onClick={() => toggleFavorite(fav)} title="즐겨찾기 해제">⭐</button>
+                                </div>
+                              </div>
+                            )
+                          })}
+                        </div>
+                      )}
+
+                      {/* 주변 도서관 섹션 */}
+                      <div className="lib-section">
+                        <div className="lib-section-header">
+                          <span className="lib-section-title">📍 내 주변 도서관</span>
+                          <span className="lib-section-hint">5km 이내</span>
+                        </div>
+                        <button
+                          className="lib-nearby-btn"
+                          onClick={doNearbySearch}
+                          disabled={nearbyLoading}
+                        >
+                          {nearbyLoading ? '위치 확인 중…' : '📍 주변 도서관 찾기'}
+                        </button>
+                        {nearbyError && (
+                          <div className="lib-error">{nearbyError}</div>
+                        )}
+                        {nearbyLibs.map(lib => {
+                          const s = lib.status ? (LIB_STATUS[lib.status] || LIB_STATUS.error) : null
+                          const isFav = favorites.some(f => f.libCode === lib.libCode)
+                          return (
+                            <div key={lib.libCode} className="lib-nearby-item">
+                              <div className="lib-nearby-info">
+                                <div className="lib-nearby-name">{lib.libName}</div>
+                                <div className="lib-nearby-addr">
+                                  <span className="lib-dist-badge">{lib.distance.toFixed(1)}km</span>
+                                  {lib.address}
+                                </div>
+                              </div>
+                              <div className="lib-nearby-actions">
+                                {s && <span className={`lib-badge ${s.cls}`}>{s.label}</span>}
+                                <button
+                                  className={`lib-fav-btn ${isFav ? 'active' : ''}`}
+                                  onClick={() => toggleFavorite(lib)}
+                                  title={isFav ? '즐겨찾기 해제' : '즐겨찾기 추가'}
+                                >
+                                  {isFav ? '⭐' : '☆'}
+                                </button>
+                              </div>
+                            </div>
+                          )
+                        })}
+                        {nearbyLibs.length === 0 && !nearbyLoading && !nearbyError && (
+                          <div className="lib-empty-hint">
+                            버튼을 누르면 주변 도서관을 찾아드려요
+                          </div>
+                        )}
+                      </div>
+
+                    </div>
+                  )}
+
+                  {/* 탭 2: 제목 검색 */}
+                  {activeTab === 2 && (
+                    <div>
+                      <div className="manual-search-label">제목 일부로 다시 검색</div>
+                      <div className="manual-search-row">
+                        <input
+                          className="manual-search-input"
+                          value={manualTitle}
+                          onChange={e => setManualTitle(e.target.value)}
+                          onKeyDown={e => e.key === 'Enter' && doManualSearch()}
+                          placeholder="책 제목 일부를 입력하세요"
+                        />
+                        <button
+                          className="manual-search-btn"
+                          onClick={doManualSearch}
+                          disabled={!manualTitle.trim()}
+                        >
+                          검색
+                        </button>
+                      </div>
+                      {lists && lists.recommended.length === 0 && lists.race.length === 0 && (
+                        <div className="list-empty" style={{ marginTop: 12 }}>
+                          두 목록 모두에 없는 책이에요.<br/>제목 일부로 검색해보세요.
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                </div>
+              </div>
+            )}
+
+            {/* 결과 나온 후 처음으로 버튼 */}
+            <div style={{ textAlign: 'center', paddingTop: 8 }}>
+              <button
+                onClick={() => { setMode('idle'); setBookData(null); setLists(null); setIsbn(''); }}
+                style={{
+                  fontSize: 12, color: 'var(--text-3)', padding: '8px 16px',
+                  border: '1px solid var(--border)', borderRadius: 20,
+                  transition: 'color 0.2s, border-color 0.2s',
+                }}
+              >
+                처음으로
+              </button>
+            </div>
+          </div>
+        )}
+
+      </main>
+
+      {/* ── 하단 고정 푸터 ── */}
+      <footer className="app-footer">
+        {showIsbnInput && (
+          <div className="isbn-panel">
+            <input
+              ref={isbnInputRef}
+              className="isbn-input"
+              value={isbn}
+              onChange={e => setIsbn(e.target.value)}
+              onKeyDown={e => e.key === 'Enter' && doSearch()}
+              placeholder="ISBN 번호 입력 (예: 9788936434120)"
+              inputMode="numeric"
+            />
+            <button
+              className="isbn-search-btn"
+              onClick={() => doSearch()}
+              disabled={mode === 'loading' || !isbn.trim()}
+            >
+              조회
+            </button>
+          </div>
+        )}
+        <div className="bottom-bar">
+          <button
+            className={`bottom-side-btn ${showIsbnInput ? 'active' : ''}`}
+            onClick={() => setShowIsbnInput(v => !v)}
+            title="ISBN 입력"
+          >
+            ⌨️
+          </button>
+          <button
+            className="scan-btn"
+            onClick={() => setShowCamera(true)}
+            disabled={showCamera}
+          >
+            <span className="scan-btn-ring" />
+            📷
+          </button>
+        </div>
+      </footer>
+
+      {/* ── 카메라 오버레이 ── */}
+      {showCamera && (
+        <CameraScanner
+          onDetected={handleDetected}
+          onClose={() => setShowCamera(false)}
+        />
+      )}
+
+      {/* ── 히스토리 드로어 ── */}
+      {showHistory && (
+        <>
+          <div className="history-overlay" onClick={() => setShowHistory(false)} />
+          <div className="history-drawer">
+            <div className="history-drawer-handle" />
+            <div className="history-drawer-header">
+              <span className="history-drawer-title">최근 스캔</span>
+              {history.length > 0 && (
+                <button
+                  className="history-drawer-clear"
+                  onClick={() => {
+                    setHistory([])
+                    localStorage.removeItem('bc_history')
+                  }}
+                >
+                  전체 삭제
+                </button>
+              )}
+            </div>
+            <div className="history-drawer-list">
+              {history.length === 0 ? (
+                <div className="list-empty" style={{ padding: '24px 18px' }}>
+                  최근 스캔 기록이 없어요
+                </div>
+              ) : history.map((h, i) => (
+                <div key={i} className="history-drawer-item" onClick={() => handleHistoryItem(h)}>
+                  {h.thumbnail
+                    ? <img src={h.thumbnail} alt="" className="history-drawer-thumb" />
+                    : <div className="history-drawer-thumb-ph">📚</div>
+                  }
+                  <div className="history-drawer-info">
+                    <div className="history-drawer-item-title">{h.title}</div>
+                    <div className="history-drawer-item-meta">{h.author}</div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </>
+      )}
+    </div>
+  )
+}
