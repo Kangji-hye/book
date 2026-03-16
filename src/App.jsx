@@ -140,7 +140,7 @@ async function fetchBookInfo(isbn) {
   if (libKey) {
     try {
       const res = await fetch(
-        `https://www.data4library.kr/api/srchBooks?authKey=${libKey}&isbn=${clean}&format=json`
+        `https://www.data4library.kr/api/srchBooks?authKey=${libKey}&isbn13=${clean}&format=json`
       )
       const data = await res.json()
       const doc = data?.response?.docs?.[0]?.doc
