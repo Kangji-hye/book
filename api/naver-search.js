@@ -11,7 +11,7 @@ export default async function handler(req, res) {
 
   try {
     const response = await fetch(
-      `https://openapi.naver.com/v1/search/book_adv.json?d_isbn=${encodeURIComponent(query)}&display=1`,
+      `https://openapi.naver.com/v1/search/book.json?query=${encodeURIComponent(query)}&display=5`,
       {
         headers: {
           'X-Naver-Client-Id': clientId,

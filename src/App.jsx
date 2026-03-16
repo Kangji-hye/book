@@ -154,6 +154,41 @@ async function fetchBookInfo(isbn) {
     } catch { /* 폴백 */ }
   }
 
+  // 3순위: 네이버 책 검색 API (서버 프록시 경유, ISBN 일치 검증)
+  const naverId = import.meta.env.VITE_NAVER_CLIENT_ID || ''
+  const naverSecret = import.meta.env.VITE_NAVER_CLIENT_SECRET || ''
+  if (naverId && naverSecret) {
+    try {
+      const url = import.meta.env.DEV
+        ? `/naver-api/v1/search/book.json?query=${encodeURIComponent(clean)}&display=5`
+        : `/api/naver-search?query=${encodeURIComponent(clean)}`
+      const fetchOpts = import.meta.env.DEV
+        ? { headers: { 'X-Naver-Client-Id': naverId, 'X-Naver-Client-Secret': naverSecret } }
+        : {}
+      const res = await fetch(url, fetchOpts)
+      if (res.ok) {
+        const data = await res.json()
+        // ISBN이 일치하는 항목만 사용 (엉뚱한 책 반환 방지)
+        const items = data?.items ?? []
+        const item = items.find(i => (i.isbn ?? '').replace(/-/g, '').includes(clean))
+        if (item?.title) {
+          return {
+            title: stripHtml(item.title),
+            author: item.author ?? '',
+            thumbnail: item.image ?? '',
+            description: stripHtml(item.description ?? ''),
+            publisher: item.publisher ?? '',
+            pubdate: formatPubdate(item.pubdate ?? ''),
+            link: item.link ?? '',
+            price: item.discount ? `${Number(item.discount).toLocaleString()}원` : '',
+            isbn: clean,
+            source: 'naver',
+          }
+        }
+      }
+    } catch { /* 폴백 */ }
+  }
+
   return null
 }
 
