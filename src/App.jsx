@@ -401,7 +401,7 @@ export default function App() {
   }, [doSearch])
 
   // 탭 인디케이터 위치
-  const tabCount = 3
+  const tabCount = 2
   const tabIndicatorLeft = `${(activeTab / tabCount) * 100}%`
   const tabIndicatorWidth = `${100 / tabCount}%`
 
@@ -575,11 +575,31 @@ export default function App() {
               </a>
             )}
 
+            {/* 리딩레이스 인라인 표시 (해당될 때만) */}
+            {lists !== null && lists.race.length > 0 && (
+              <div className="list-section">
+                <div className="list-section-header">
+                  <span className="list-status-icon">✅</span>
+                  <span className="list-section-title">리딩레이스 목록</span>
+                  <span className="list-section-count">{lists.race.length}건</span>
+                </div>
+                {lists.race.map((r, i) => (
+                  <div key={i} className="list-item">
+                    {r.level && <span className="list-badge race">{r.level}단계</span>}
+                    <div>
+                      <div className="list-item-title">{r.title}</div>
+                      {r.author && <div className="list-item-author">{r.author}</div>}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+
             {/* 탭 */}
             {lists !== null && (
               <div className="tabs-wrap">
                 <div className="tabs-header">
-                  {['목록 확인', '도서관 소장', '제목 검색'].map((label, i) => (
+                  {['도서관 소장', '제목 검색'].map((label, i) => (
                     <button key={i} className={`tab-btn ${activeTab === i ? 'active' : ''}`} onClick={() => setActiveTab(i)}>
                       {label}
                     </button>
@@ -589,36 +609,8 @@ export default function App() {
 
                 <div className="tab-content">
 
-                  {/* 탭 0: 목록 확인 */}
+                  {/* 탭 0: 도서관 소장 */}
                   {activeTab === 0 && (
-                    <div>
-                      {/* 리딩레이스 */}
-                      <div className="list-section">
-                        <div className="list-section-header">
-                          <span className="list-status-icon">{lists.race.length > 0 ? '✅' : '❌'}</span>
-                          <span className="list-section-title">리딩레이스 목록</span>
-                          <span className="list-section-count">
-                            {lists.race.length > 0 ? `${lists.race.length}건` : '없음'}
-                          </span>
-                        </div>
-                        {lists.race.length > 0 ? lists.race.map((r, i) => (
-                          <div key={i} className="list-item">
-                            {r.level && <span className="list-badge race">{r.level}단계</span>}
-                            <div>
-                              <div className="list-item-title">{r.title}</div>
-                              {r.author && <div className="list-item-author">{r.author}</div>}
-                            </div>
-                          </div>
-                        )) : (
-                          <div className="list-empty">리딩레이스 목록에 없는 책이에요</div>
-                        )}
-                      </div>
-
-                    </div>
-                  )}
-
-                  {/* 탭 1: 도서관 소장 */}
-                  {activeTab === 1 && (
                     <div>
 
                       {/* 즐겨찾기 섹션 */}
@@ -704,8 +696,8 @@ export default function App() {
                     </div>
                   )}
 
-                  {/* 탭 2: 제목 검색 */}
-                  {activeTab === 2 && (
+                  {/* 탭 1: 제목 검색 */}
+                  {activeTab === 1 && (
                     <div>
                       <div className="manual-search-label">제목 일부로 다시 검색</div>
                       <div className="manual-search-row">
