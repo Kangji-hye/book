@@ -4,8 +4,6 @@ import CameraScanner from './components/CameraScanner'
 import './App.css'
 
 // ── 상수 ──────────────────────────────────────────────────────────────────────
-const LIB_API_KEY = import.meta.env.VITE_LIB_APIKEY || ''
-
 const GRADE_LABEL = {
   '-1': '유치원',
   '1': '1학년', '2': '2학년', '3': '3학년',
@@ -38,25 +36,6 @@ function formatPubdate(d = '') {
   return d
 }
 
-// ── JSONP 헬퍼 ────────────────────────────────────────────────────────────────
-function fetchJsonp(url) {
-  return new Promise((resolve, reject) => {
-    const cbName = '_libcb_' + Math.random().toString(36).slice(2)
-    const script = document.createElement('script')
-    const timer = setTimeout(() => {
-      delete window[cbName]; script.remove(); reject(new Error('timeout'))
-    }, 8000)
-    window[cbName] = (data) => {
-      clearTimeout(timer); delete window[cbName]; script.remove(); resolve(data)
-    }
-    script.src = `${url}&callback=${cbName}`
-    script.onerror = () => {
-      clearTimeout(timer); delete window[cbName]; script.remove(); reject(new Error('error'))
-    }
-    document.head.appendChild(script)
-  })
-}
-
 // ── 거리 계산 (Haversine, km) ─────────────────────────────────────────────────
 function haversine(lat1, lng1, lat2, lng2) {
   const R = 6371
@@ -68,8 +47,8 @@ function haversine(lat1, lng1, lat2, lng2) {
 
 // ── 주변 도서관 검색 ──────────────────────────────────────────────────────────
 async function fetchNearbyLibs(lat, lng, radius = 5) {
-  const url = `https://www.data4library.kr/api/libSrch?authKey=${LIB_API_KEY}&latitude=${lat}&longitude=${lng}&radius=${radius}&format=json`
-  const data = await fetchJsonp(url)
+  const res = await fetch(`/api/lib-search?lat=${lat}&lng=${lng}&radius=${radius}`)
+  const data = await res.json()
   const libs = data?.response?.libs ?? []
   return libs
     .map(({ lib }) => ({
@@ -87,8 +66,8 @@ async function fetchNearbyLibs(lat, lng, radius = 5) {
 // ── 소장/대출 여부 확인 ───────────────────────────────────────────────────────
 async function checkBookExist(libCode, isbn) {
   try {
-    const url = `https://www.data4library.kr/api/bookExist?authKey=${LIB_API_KEY}&libCode=${libCode}&isbn13=${isbn}&format=json`
-    const data = await fetchJsonp(url)
+    const res = await fetch(`/api/book-exist?libCode=${libCode}&isbn=${isbn}`)
+    const data = await res.json()
     const result = data?.response?.result
     if (!result) return 'error'
     if (result.hasBook === 'N') return 'none'
