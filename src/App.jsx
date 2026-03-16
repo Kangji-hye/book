@@ -154,39 +154,6 @@ async function fetchBookInfo(isbn) {
     } catch { /* 폴백 */ }
   }
 
-  // 3순위: 네이버 책 검색 API (서버 프록시 경유)
-  const naverId = import.meta.env.VITE_NAVER_CLIENT_ID || ''
-  const naverSecret = import.meta.env.VITE_NAVER_CLIENT_SECRET || ''
-  if (naverId && naverSecret) {
-    try {
-      const url = import.meta.env.DEV
-        ? `/naver-api/v1/search/book.json?query=${encodeURIComponent(clean)}&display=1`
-        : `/api/naver-search?query=${encodeURIComponent(clean)}`
-      const fetchOpts = import.meta.env.DEV
-        ? { headers: { 'X-Naver-Client-Id': naverId, 'X-Naver-Client-Secret': naverSecret } }
-        : {}
-      const res = await fetch(url, fetchOpts)
-      if (res.ok) {
-        const data = await res.json()
-        const item = data?.items?.[0]
-        if (item?.title) {
-          return {
-            title: stripHtml(item.title),
-            author: item.author ?? '',
-            thumbnail: item.image ?? '',
-            description: stripHtml(item.description ?? ''),
-            publisher: item.publisher ?? '',
-            pubdate: formatPubdate(item.pubdate ?? ''),
-            link: item.link ?? '',
-            price: item.discount ? `${Number(item.discount).toLocaleString()}원` : '',
-            isbn: item.isbn ?? clean,
-            source: 'naver',
-          }
-        }
-      }
-    } catch { /* 폴백 */ }
-  }
-
   return null
 }
 
@@ -296,12 +263,25 @@ export default function App() {
     // 1) ISBN으로 DB 직접 조회
     const direct = await searchByIsbn(clean)
     if (direct.recommended.length > 0 || direct.race.length > 0) {
-      // DB에서 찾았으니 외부 API로 책 정보도 가져옴
+      // 외부 API로 책 정보 가져오기 (실패 시 DB 정보로 폴백)
       const info = await fetchBookInfo(clean)
-      if (info) {
-        setBookData(info)
-        currentTitleRef.current = info.title
-        addHistory(info, clean)
+      const dbEntry = direct.recommended[0] || direct.race[0]
+      const bookInfo = info ?? (dbEntry ? {
+        title: dbEntry.title ?? '',
+        author: dbEntry.author ?? '',
+        thumbnail: '',
+        description: '',
+        publisher: '',
+        pubdate: '',
+        link: '',
+        price: '',
+        isbn: clean,
+        source: 'db',
+      } : null)
+      if (bookInfo) {
+        setBookData(bookInfo)
+        currentTitleRef.current = bookInfo.title
+        addHistory(bookInfo, clean)
       }
       setLists(direct)
       setMode('result')
@@ -525,7 +505,7 @@ export default function App() {
                 </div>
                 <div className="book-meta">
                   <span className="book-source-badge">
-                    {bookData.source === 'naver' ? '네이버' : bookData.source === 'lib' ? '도서관' : 'Google Books'}
+                    {bookData.source === 'lib' ? '도서관' : bookData.source === 'db' ? '목록DB' : 'Google Books'}
                   </span>
                   <div className="book-title">{bookData.title}</div>
                   <div className="book-author">{bookData.author}</div>
