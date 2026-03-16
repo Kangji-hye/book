@@ -434,6 +434,13 @@ export default function App() {
         {/* 아이들 화면 */}
         {mode === 'idle' && (
           <div className="idle-hero">
+            {/* 로고 */}
+            <img
+              src="/logo.png"
+              alt="책 스캐너 로고"
+              style={{ width: 72, height: 72, objectFit: 'contain', marginBottom: 8 }}
+            />
+
             {/* 레이더 애니메이션 */}
             <div className="idle-radar-wrap">
               <div className="idle-radar-ring" />
