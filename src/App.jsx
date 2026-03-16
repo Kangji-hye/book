@@ -4,12 +4,6 @@ import CameraScanner from './components/CameraScanner'
 import './App.css'
 
 // ── 상수 ──────────────────────────────────────────────────────────────────────
-const GRADE_LABEL = {
-  '-1': '유치원',
-  '1': '1학년', '2': '2학년', '3': '3학년',
-  '4': '4학년', '5': '5학년', '6': '6학년',
-}
-
 const LIB_STATUS = {
   loading:     { label: '조회 중…',     cls: 'loading' },
   available:   { label: '✅ 대출 가능',  cls: 'available' },
@@ -620,28 +614,6 @@ export default function App() {
                         )}
                       </div>
 
-                      {/* 추천도서 */}
-                      <div className="list-section">
-                        <div className="list-section-header">
-                          <span className="list-status-icon">{lists.recommended.length > 0 ? '✅' : '❌'}</span>
-                          <span className="list-section-title">독서수첩 추천도서</span>
-                          <span className="list-section-count">
-                            {lists.recommended.length > 0 ? `${lists.recommended.length}건` : '없음'}
-                          </span>
-                        </div>
-                        {lists.recommended.length > 0 ? lists.recommended.map((r, i) => (
-                          <div key={i} className="list-item">
-                            <span className="list-badge rec">{GRADE_LABEL[String(r.grade_code)] ?? `${r.grade_code}학년`}</span>
-                            <div>
-                              <div className="list-item-title">{r.title}</div>
-                              {r.author && <div className="list-item-author">{r.author}</div>}
-                            </div>
-                            {r.book_no && <span className="list-item-no">No.{r.book_no}</span>}
-                          </div>
-                        )) : (
-                          <div className="list-empty">추천도서 목록에 없는 책이에요</div>
-                        )}
-                      </div>
                     </div>
                   )}
 
