@@ -98,11 +98,63 @@ async function checkBookExist(libCode, isbn) {
   }
 }
 
-// ── 책 정보 조회 (네이버 → Google Books) ──────────────────────────────────────
+// ── 책 정보 조회 (Google Books → 도서관 → 네이버) ───────────────────────────
 async function fetchBookInfo(isbn) {
   const clean = isbn.replace(/-/g, '').trim()
+  if (!clean) return null
 
-  // 1순위: 네이버 책 검색 API
+  // 1순위: Google Books API (CORS 문제 없음, ISBN 정확 검색)
+  try {
+    const res = await fetch(`https://www.googleapis.com/books/v1/volumes?q=isbn:${clean}`)
+    if (res.ok) {
+      const data = await res.json()
+      const item = data?.items?.[0]?.volumeInfo
+      if (item?.title) {
+        return {
+          title: item.title,
+          author: (item.authors ?? []).join(', '),
+          thumbnail: (item.imageLinks?.thumbnail ?? '').replace('http:', 'https:'),
+          description: item.description ?? '',
+          publisher: item.publisher ?? '',
+          pubdate: item.publishedDate ?? '',
+          link: item.infoLink ?? '',
+          price: '',
+          isbn: clean,
+          source: 'google',
+        }
+      }
+    }
+  } catch { /* 폴백 */ }
+
+  // 2순위: 도서관 정보나루 API (한국 도서 특화)
+  const libKey = import.meta.env.VITE_LIB_APIKEY || ''
+  if (libKey) {
+    try {
+      const res = await fetch(
+        `https://www.data4library.kr/api/srchBooks?authKey=${libKey}&isbn13=${clean}&format=json`
+      )
+      if (res.ok) {
+        const data = await res.json()
+        const doc = data?.response?.docs?.[0]?.doc
+        if (doc?.bookname) {
+          return {
+            title: doc.bookname,
+            author: doc.authors ?? '',
+            thumbnail: doc.bookImageURL ?? '',
+            description: doc.description ?? '',
+            publisher: doc.publisher ?? '',
+            pubdate: '',
+            link: '',
+            price: '',
+            isbn: clean,
+            source: 'lib',
+          }
+        }
+      }
+    } catch { /* 폴백 */ }
+  }
+
+  // 3순위: 네이버 책 검색 API (서버 프록시 경유)
   const naverId = import.meta.env.VITE_NAVER_CLIENT_ID || ''
   const naverSecret = import.meta.env.VITE_NAVER_CLIENT_SECRET || ''
   if (naverId && naverSecret) {
@@ -110,77 +162,30 @@ async function fetchBookInfo(isbn) {
       const url = import.meta.env.DEV
         ? `/naver-api/v1/search/book.json?query=${encodeURIComponent(clean)}&display=1`
         : `/api/naver-search?query=${encodeURIComponent(clean)}`
-      const res = await fetch(
-        url,
-        import.meta.env.DEV
-          ? { headers: { 'X-Naver-Client-Id': naverId, 'X-Naver-Client-Secret': naverSecret } }
-          : {}
-      )
-      const data = await res.json()
-      const item = data?.items?.[0]
-      if (item) {
-        return {
-          title: stripHtml(item.title ?? ''),
-          author: item.author ?? '',
-          thumbnail: item.image ?? '',
-          description: stripHtml(item.description ?? ''),
-          publisher: item.publisher ?? '',
-          pubdate: formatPubdate(item.pubdate ?? ''),
-          link: item.link ?? '',
-          price: item.discount ? `${Number(item.discount).toLocaleString()}원` : '',
-          isbn: item.isbn ?? clean,
-          source: 'naver',
+      const fetchOpts = import.meta.env.DEV
+        ? { headers: { 'X-Naver-Client-Id': naverId, 'X-Naver-Client-Secret': naverSecret } }
+        : {}
+      const res = await fetch(url, fetchOpts)
+      if (res.ok) {
+        const data = await res.json()
+        const item = data?.items?.[0]
+        if (item?.title) {
+          return {
+            title: stripHtml(item.title),
+            author: item.author ?? '',
+            thumbnail: item.image ?? '',
+            description: stripHtml(item.description ?? ''),
+            publisher: item.publisher ?? '',
+            pubdate: formatPubdate(item.pubdate ?? ''),
+            link: item.link ?? '',
+            price: item.discount ? `${Number(item.discount).toLocaleString()}원` : '',
+            isbn: item.isbn ?? clean,
+            source: 'naver',
+          }
         }
       }
     } catch { /* 폴백 */ }
   }
-
-  // 2순위: 도서관 정보나루 API
-  const libKey = import.meta.env.VITE_LIB_APIKEY || ''
-  if (libKey) {
-    try {
-      const res = await fetch(
-        `https://www.data4library.kr/api/srchBooks?authKey=${libKey}&isbn13=${clean}&format=json`
-      )
-      const data = await res.json()
-      const doc = data?.response?.docs?.[0]?.doc
-      if (doc) {
-        return {
-          title: doc.bookname ?? '',
-          author: doc.authors ?? '',
-          thumbnail: doc.bookImageURL ?? '',
-          description: doc.description ?? '',
-          publisher: doc.publisher ?? '',
-          pubdate: '',
-          link: '',
-          price: '',
-          isbn: clean,
-          source: 'lib',
-        }
-      }
-    } catch { /* 폴백 */ }
-  }
-
-  // 3순위: Google Books API
-  try {
-    const res = await fetch(`https://www.googleapis.com/books/v1/volumes?q=isbn:${clean}`)
-    const data = await res.json()
-    const item = data?.items?.[0]?.volumeInfo
-    if (item) {
-      return {
-        title: item.title ?? '',
-        author: (item.authors ?? []).join(', '),
-        thumbnail: (item.imageLinks?.thumbnail ?? '').replace('http:', 'https:'),
-        description: item.description ?? '',
-        publisher: item.publisher ?? '',
-        pubdate: item.publishedDate ?? '',
-        link: item.infoLink ?? '',
-        price: '',
-        isbn: clean,
-        source: 'google',
-      }
-    }
-  } catch { /* ignore */ }
 
   return null
 }
