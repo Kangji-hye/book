@@ -777,7 +777,7 @@ export default function App() {
             <p className="idle-sub">
               책 뒷면에 바코드를 스캔하면 ISBN을 인식해서<br/>
               리딩레이스 목록과<br/>
-              근처 도서관 소장 여부를 확인해드려요
+              근처 도서관 소장 여부를 확인해드려요.
             </p>
             {bookFavorites.length > 0 && (
               <>
