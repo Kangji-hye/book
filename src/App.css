@@ -113,7 +113,7 @@
   border-radius: var(--radius-sm);
   padding: 10px 14px;
   color: var(--text-1);
-  font-size: 15px;
+  font-size: 16px;
   font-family: monospace;
   letter-spacing: 0.06em;
   transition: border-color 0.2s;
@@ -555,7 +555,16 @@
   gap: 10px;
   margin-bottom: 10px;
 }
-.list-status-icon { font-size: 18px; }
+.list-tag-badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 4px;
+  background: var(--gold);
+  color: #0a0a14;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+}
 .list-section-title {
   font-size: 14px;
   font-weight: 700;
@@ -644,6 +653,33 @@
 .lib-nearby-btn:hover { background: var(--card-hover); border-color: var(--gold); color: var(--gold); }
 .lib-nearby-btn:active { transform: scale(0.98); }
 .lib-nearby-btn:disabled { opacity: 0.5; }
+
+/* ── 스와이프 삭제 ── */
+.swipe-row-wrap {
+  position: relative;
+  overflow: hidden;
+}
+.swipe-row-bg {
+  position: absolute;
+  right: 0; top: 0; bottom: 0;
+  width: 80px;
+  background: #e53e3e;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+  font-size: 13px;
+  font-weight: 600;
+}
+.swipe-row-content {
+  transition: transform 0.15s ease;
+  background: var(--surface-1);
+}
+.swipe-row-content.deleting {
+  transform: translateX(-100%) !important;
+  opacity: 0;
+  transition: transform 0.2s ease, opacity 0.2s ease;
+}
 
 .lib-nearby-item {
   display: flex;
@@ -906,7 +942,7 @@
   border-radius: var(--radius-sm);
   padding: 9px 12px;
   color: var(--text-1);
-  font-size: 14px;
+  font-size: 16px;
   transition: border-color 0.2s;
 }
 .manual-search-input:focus { border-color: var(--gold); }
